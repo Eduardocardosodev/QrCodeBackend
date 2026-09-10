@@ -22,7 +22,8 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const port = configService.get<number>('PORT', 3000);
 
-  await app.listen(port);
+  // Listen on all interfaces so Render can detect the open port
+  await app.listen(port, '0.0.0.0');
 }
 
 void bootstrap();
