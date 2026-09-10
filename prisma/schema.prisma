@@ -1,0 +1,93 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+  folders       Folder[]
+  qrCodes       QrCode[]
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String
+  userId    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  qrCodes   QrCode[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+enum DeviceType {
+  mobile
+  tablet
+  desktop
+  unknown
+}
+
+model QrCode {
+  id             String      @id @default(uuid())
+  name           String
+  slug           String      @unique
+  destinationUrl String
+  color          String      @default("#000000")
+  isActive       Boolean     @default(true)
+  userId         String
+  folderId       String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  folder         Folder?     @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  scanEvents     ScanEvent[]
+
+  @@index([userId])
+  @@index([folderId])
+  @@index([slug])
+}
+
+model ScanEvent {
+  id              String     @id @default(uuid())
+  qrCodeId        String
+  occurredAt      DateTime   @default(now())
+  ipHash          String?
+  userAgent       String?
+  deviceType      DeviceType @default(unknown)
+  operatingSystem String?
+  browser         String?
+  referer         String?
+  country         String?
+  state           String?
+  city            String?
+  qrCode          QrCode     @relation(fields: [qrCodeId], references: [id], onDelete: Cascade)
+
+  @@index([qrCodeId, occurredAt])
+  @@index([occurredAt])
+  @@index([country])
+  @@index([state])
+  @@index([city])
+}
