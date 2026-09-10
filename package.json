@@ -8,7 +8,8 @@
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "start": "node --enable-source-maps --max-old-space-size=512 dist/main.js",
+    "start": "sh -c \"node --enable-source-maps --max-old-space-size=512 dist/main.js || node --enable-source-maps --max-old-space-size=512 dist/main.cjs || node --enable-source-maps --max-old-space-size=512 dist/main.mjs || node --enable-source-maps --max-old-space-size=512 dist/main\"",
+    "postbuild": "echo 'Listing dist contents:' && ls -la dist || true",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
