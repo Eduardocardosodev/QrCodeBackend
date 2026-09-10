@@ -10,12 +10,14 @@ describe('QrCodesService', () => {
   const prisma = {
     qrCode: {
       findMany: jest.fn(),
+      count: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
     },
     folder: {
       upsert: jest.fn(),
+      findFirst: jest.fn(),
     },
     $transaction: jest.fn(),
   };
@@ -57,18 +59,24 @@ describe('QrCodesService', () => {
     service = module.get<QrCodesService>(QrCodesService);
     jest.clearAllMocks();
     prisma.$transaction.mockImplementation(
-      async (callback: (tx: typeof prisma) => Promise<unknown>) =>
-        callback(prisma),
+      async (
+        input:
+          ((tx: typeof prisma) => Promise<unknown>) | Array<Promise<unknown>>,
+      ) => (typeof input === 'function' ? input(prisma) : Promise.all(input)),
     );
   });
 
   it('deve listar QR Codes do usuário', async () => {
+    prisma.qrCode.count.mockResolvedValue(1);
     prisma.qrCode.findMany.mockResolvedValue([qrCode]);
 
-    const result = await service.findAllByUser(userId);
+    const result = await service.findAllByUser(userId, {
+      page: 1,
+      limit: 20,
+    });
 
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual({
+    expect(result.total).toBe(1);
+    expect(result.items[0]).toEqual({
       id: qrCode.id,
       name: qrCode.name,
       destinationUrl: qrCode.destinationUrl,
@@ -76,6 +84,31 @@ describe('QrCodesService', () => {
       color: '#000000',
       publicUrl: 'http://localhost:3000/redirects/abc12345',
       createdAt: qrCode.createdAt.toISOString(),
+    });
+  });
+
+  it('deve paginar QR Codes e calcular total de páginas', async () => {
+    prisma.qrCode.count.mockResolvedValue(45);
+    prisma.qrCode.findMany.mockResolvedValue([]);
+
+    const result = await service.findAllByUser(userId, {
+      page: 2,
+      limit: 20,
+    });
+
+    expect(prisma.qrCode.findMany).toHaveBeenCalledWith({
+      where: { userId, isActive: true },
+      include: { folder: true },
+      orderBy: { createdAt: 'desc' },
+      skip: 20,
+      take: 20,
+    });
+    expect(result).toEqual({
+      items: [],
+      page: 2,
+      limit: 20,
+      total: 45,
+      totalPages: 3,
     });
   });
 
@@ -136,5 +169,71 @@ describe('QrCodesService', () => {
     await expect(service.resolveRedirect('inexistente')).rejects.toBeInstanceOf(
       NotFoundException,
     );
+  });
+
+  it('deve criar lote com nomes sequenciais e mesma URL, pasta e cor', async () => {
+    prisma.folder.findFirst.mockResolvedValue(qrCode.folder);
+    prisma.qrCode.findUnique.mockResolvedValue(null);
+    prisma.qrCode.create.mockImplementation(
+      ({ data }: { data: { name: string; slug: string } }) => ({
+        ...qrCode,
+        id: `qr-${data.name}`,
+        name: data.name,
+        slug: data.slug,
+        destinationUrl: 'https://example.com/padrao',
+      }),
+    );
+
+    const result = await service.createBatch(userId, {
+      prefix: 'Cliente',
+      quantity: 3,
+      destinationUrl: 'https://example.com/padrao',
+      folderId: 'folder-1',
+    });
+
+    expect(result.count).toBe(3);
+    expect(result.items).toHaveLength(3);
+    expect(result.items[0].name).toBe('Cliente 1');
+    expect(result.items[2].name).toBe('Cliente 3');
+    expect(
+      result.items.every(
+        (item) => item.destinationUrl === 'https://example.com/padrao',
+      ),
+    ).toBe(true);
+    expect(result.items.every((item) => item.folder === 'Clientes')).toBe(true);
+    expect(result.items.every((item) => item.color === '#000000')).toBe(true);
+  });
+
+  it('deve retornar 404 para pasta de outro usuário no lote', async () => {
+    prisma.folder.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.createBatch(userId, {
+        prefix: 'Cliente',
+        quantity: 2,
+        destinationUrl: 'https://example.com/padrao',
+        folderId: 'folder-outro-usuario',
+      }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('deve propagar erro e não concluir lote quando criação falhar', async () => {
+    prisma.folder.findFirst.mockResolvedValue(qrCode.folder);
+    prisma.qrCode.findUnique.mockResolvedValue(null);
+    prisma.qrCode.create
+      .mockResolvedValueOnce({
+        ...qrCode,
+        name: 'Cliente 1',
+      })
+      .mockRejectedValueOnce(new Error('falha no banco'));
+
+    await expect(
+      service.createBatch(userId, {
+        prefix: 'Cliente',
+        quantity: 2,
+        destinationUrl: 'https://example.com/padrao',
+        folderId: 'folder-1',
+      }),
+    ).rejects.toThrow('falha no banco');
   });
 });

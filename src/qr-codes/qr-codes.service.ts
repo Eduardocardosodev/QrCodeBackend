@@ -4,16 +4,21 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Folder, QrCode } from '@prisma/client';
+import { Folder, Prisma, QrCode } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { CreateQrCodeBatchDto } from './dto/create-qr-code-batch.dto';
 import { CreateQrCodeDto } from './dto/create-qr-code.dto';
+import { PaginatedQrCodesQueryDto } from './dto/paginated-qr-codes-query.dto';
 import { UpdateQrCodeDto } from './dto/update-qr-code.dto';
+import { BatchQrCodeResponse } from './types/batch-qr-code-response.type';
+import { PaginatedQrCodesResponse } from './types/paginated-qr-codes-response.type';
 import { QrCodeResponse } from './types/qr-code-response.type';
 import { buildPublicUrl } from './utils/public-url.util';
 import { generateSlug } from './utils/slug.util';
 
 const DEFAULT_QR_COLOR = '#000000';
 const MAX_SLUG_ATTEMPTS = 5;
+const MAX_BATCH_SLUG_ATTEMPTS = 20;
 
 type QrCodeWithFolder = QrCode & {
   folder: Folder | null;
@@ -26,14 +31,31 @@ export class QrCodesService {
     private readonly configService: ConfigService,
   ) {}
 
-  async findAllByUser(userId: string): Promise<QrCodeResponse[]> {
-    const qrCodes = await this.prisma.qrCode.findMany({
-      where: { userId, isActive: true },
-      include: { folder: true },
-      orderBy: { createdAt: 'desc' },
-    });
+  async findAllByUser(
+    userId: string,
+    query: PaginatedQrCodesQueryDto,
+  ): Promise<PaginatedQrCodesResponse> {
+    const where = { userId, isActive: true };
+    const skip = (query.page - 1) * query.limit;
 
-    return qrCodes.map((qrCode) => this.toResponse(qrCode));
+    const [total, qrCodes] = await this.prisma.$transaction([
+      this.prisma.qrCode.count({ where }),
+      this.prisma.qrCode.findMany({
+        where,
+        include: { folder: true },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: query.limit,
+      }),
+    ]);
+
+    return {
+      items: qrCodes.map((qrCode) => this.toResponse(qrCode)),
+      page: query.page,
+      limit: query.limit,
+      total,
+      totalPages: total === 0 ? 0 : Math.ceil(total / query.limit),
+    };
   }
 
   async create(userId: string, dto: CreateQrCodeDto): Promise<QrCodeResponse> {
@@ -69,6 +91,54 @@ export class QrCodesService {
     });
 
     return this.toResponse(qrCode);
+  }
+
+  async createBatch(
+    userId: string,
+    dto: CreateQrCodeBatchDto,
+  ): Promise<BatchQrCodeResponse> {
+    const folder = await this.prisma.folder.findFirst({
+      where: {
+        id: dto.folderId,
+        userId,
+      },
+    });
+
+    if (!folder) {
+      throw new NotFoundException('Pasta não encontrada');
+    }
+
+    const prefix = dto.prefix.trim();
+    const destinationUrl = dto.destinationUrl.trim();
+    const color = dto.color ?? DEFAULT_QR_COLOR;
+
+    const items = await this.prisma.$transaction(async (tx) => {
+      const slugs = await this.generateUniqueSlugs(dto.quantity, tx);
+      const created: QrCodeWithFolder[] = [];
+
+      for (let index = 0; index < dto.quantity; index += 1) {
+        const qrCode = await tx.qrCode.create({
+          data: {
+            name: `${prefix} ${index + 1}`,
+            slug: slugs[index],
+            destinationUrl,
+            color,
+            userId,
+            folderId: folder.id,
+          },
+          include: { folder: true },
+        });
+
+        created.push(qrCode);
+      }
+
+      return created;
+    });
+
+    return {
+      count: items.length,
+      items: items.map((qrCode) => this.toResponse(qrCode)),
+    };
   }
 
   async softDelete(userId: string, id: string): Promise<void> {
@@ -141,10 +211,12 @@ export class QrCodesService {
     return qrCode;
   }
 
-  private async generateUniqueSlug(): Promise<string> {
+  private async generateUniqueSlug(
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<string> {
     for (let attempt = 0; attempt < MAX_SLUG_ATTEMPTS; attempt += 1) {
       const slug = generateSlug();
-      const existing = await this.prisma.qrCode.findUnique({
+      const existing = await client.qrCode.findUnique({
         where: { slug },
         select: { id: true },
       });
@@ -155,6 +227,46 @@ export class QrCodesService {
     }
 
     throw new Error('Não foi possível gerar um slug único');
+  }
+
+  private async generateUniqueSlugs(
+    quantity: number,
+    tx: Prisma.TransactionClient,
+  ): Promise<string[]> {
+    const slugs: string[] = [];
+    const used = new Set<string>();
+
+    while (slugs.length < quantity) {
+      let attempts = 0;
+
+      while (attempts < MAX_BATCH_SLUG_ATTEMPTS) {
+        const slug = generateSlug();
+
+        if (used.has(slug)) {
+          attempts += 1;
+          continue;
+        }
+
+        const existing = await tx.qrCode.findUnique({
+          where: { slug },
+          select: { id: true },
+        });
+
+        if (!existing) {
+          used.add(slug);
+          slugs.push(slug);
+          break;
+        }
+
+        attempts += 1;
+      }
+
+      if (attempts >= MAX_BATCH_SLUG_ATTEMPTS) {
+        throw new Error('Não foi possível gerar slugs únicos para o lote');
+      }
+    }
+
+    return slugs;
   }
 
   private normalizeFolderName(folder: string): string {

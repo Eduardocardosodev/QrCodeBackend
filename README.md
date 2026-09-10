@@ -106,6 +106,117 @@ curl -X POST http://localhost:3000/feedbacks/{token} \
 curl http://localhost:3000/feedbacks/{token}/context
 ```
 
+## Módulo de QR Codes
+
+### Endpoints autenticados
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/qr-codes?page=1&limit=20` | Lista QR Codes ativos paginados |
+| `POST` | `/qr-codes` | Cria um QR Code |
+| `POST` | `/qr-codes/batch` | Cria lote de QR Codes |
+| `PATCH` | `/qr-codes/:id` | Atualiza `destinationUrl` |
+| `DELETE` | `/qr-codes/:id` | Exclusão lógica de QR Code |
+| `GET` | `/folders` | Lista pastas do usuário |
+
+### Rota pública
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/redirects/:slug` | Redirect 302 para o destino atual |
+
+### Criação em lote
+
+```bash
+curl -X POST http://localhost:3000/qr-codes/batch \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prefix": "Cliente",
+    "quantity": 100,
+    "destinationUrl": "https://example.com/padrao",
+    "folderId": "uuid-da-pasta",
+    "color": "#000000"
+  }'
+```
+
+Regras do lote:
+
+- `prefix` gera nomes sequenciais: `Cliente 1`, `Cliente 2`, etc.
+- `quantity` aceita valores entre `1` e `1000`.
+- `destinationUrl`, `folderId` e `color` são iguais para todos os itens.
+- `folderId` deve pertencer ao usuário autenticado.
+- A operação é atômica: se houver falha, nenhum QR Code do lote é criado.
+
+Resposta `201`:
+
+```json
+{
+  "count": 100,
+  "items": [
+    {
+      "id": "uuid",
+      "name": "Cliente 1",
+      "destinationUrl": "https://example.com/padrao",
+      "folder": "Clientes",
+      "color": "#000000",
+      "publicUrl": "http://localhost:3000/redirects/abc12345",
+      "createdAt": "2026-09-10T14:00:00.000Z"
+    }
+  ]
+}
+```
+
+Use `GET /folders` para obter o `folderId` de uma pasta existente antes de criar o lote.
+
+### CRUD de pastas
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `POST` | `/folders` | Cria uma pasta |
+| `GET` | `/folders` | Lista as pastas do usuário |
+
+`GET /qr-codes` aceita `page` a partir de `1` e `limit` entre `1` e `100`.
+O retorno possui `items`, `page`, `limit`, `total` e `totalPages`:
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "name": "Cardápio",
+      "destinationUrl": "https://example.com/menu",
+      "folder": "Clientes",
+      "color": "#000000",
+      "publicUrl": "http://localhost:3000/redirects/abc12345",
+      "createdAt": "2026-09-10T14:00:00.000Z"
+    }
+  ],
+  "page": 1,
+  "limit": 20,
+  "total": 45,
+  "totalPages": 3
+}
+```
+| `GET` | `/folders/:id` | Busca uma pasta do usuário |
+| `PATCH` | `/folders/:id` | Renomeia uma pasta |
+| `DELETE` | `/folders/:id` | Exclui uma pasta |
+
+Todas as rotas exigem Bearer token. A exclusão da pasta preserva os QR Codes
+associados, deixando-os sem pasta.
+
+Exemplo:
+
+```bash
+curl -X POST http://localhost:3000/folders \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Clientes"}'
+```
+
+O nome da pasta é único por usuário. Criar ou renomear para um nome já
+existente retorna `409 Conflict`.
+
 ## Arquitetura
 
 Os módulos seguem Clean Architecture:
