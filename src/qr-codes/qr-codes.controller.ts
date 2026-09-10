@@ -51,7 +51,7 @@ export class QrCodesController {
     @Param('id') id: string,
     @Body() dto: UpdateQrCodeDto,
   ) {
-    return this.qrCodesService.updateDestination(user.id, id, dto);
+    return this.qrCodesService.update(user.id, id, dto);
   }
 
   @Delete(':id')

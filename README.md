@@ -112,10 +112,10 @@ curl http://localhost:3000/feedbacks/{token}/context
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/qr-codes?page=1&limit=20` | Lista QR Codes ativos paginados |
+| `GET` | `/qr-codes?page=1&limit=20&isInUse=false` | Lista QR Codes ativos paginados |
 | `POST` | `/qr-codes` | Cria um QR Code |
 | `POST` | `/qr-codes/batch` | Cria lote de QR Codes |
-| `PATCH` | `/qr-codes/:id` | Atualiza `destinationUrl` |
+| `PATCH` | `/qr-codes/:id` | Atualiza `name`, `address`, `destinationUrl` e/ou `isInUse` |
 | `DELETE` | `/qr-codes/:id` | Exclusão lógica de QR Code |
 | `GET` | `/folders` | Lista pastas do usuário |
 
@@ -158,13 +158,28 @@ Resposta `201`:
       "id": "uuid",
       "name": "Cliente 1",
       "destinationUrl": "https://example.com/padrao",
+      "address": "Rua Principal, 100",
       "folder": "Clientes",
       "color": "#000000",
+      "isInUse": false,
       "publicUrl": "http://localhost:3000/redirects/abc12345",
       "createdAt": "2026-09-10T14:00:00.000Z"
     }
   ]
 }
+```
+
+Novos QR Codes são criados com `isInUse: false`. O campo `address` é opcional para permitir gerar QR Codes de estoque antes de vinculá-los a um estabelecimento. Use `PATCH /qr-codes/:id` para atualizar o nome, endereço ou marcar como vendido/em uso:
+
+```bash
+curl -X PATCH http://localhost:3000/qr-codes/{id} \
+  -H "Authorization: Bearer <accessToken>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Unidade Centro",
+    "address": "Avenida Central, 200",
+    "isInUse": true
+  }'
 ```
 
 Use `GET /folders` para obter o `folderId` de uma pasta existente antes de criar o lote.
@@ -176,7 +191,8 @@ Use `GET /folders` para obter o `folderId` de uma pasta existente antes de criar
 | `POST` | `/folders` | Cria uma pasta |
 | `GET` | `/folders` | Lista as pastas do usuário |
 
-`GET /qr-codes` aceita `page` a partir de `1` e `limit` entre `1` e `100`.
+`GET /qr-codes` aceita `page` a partir de `1`, `limit` entre `1` e `100` e o filtro opcional `isInUse=true|false`.
+Sem `isInUse`, a API retorna todos os QR Codes ativos.
 O retorno possui `items`, `page`, `limit`, `total` e `totalPages`:
 
 ```json
@@ -188,6 +204,7 @@ O retorno possui `items`, `page`, `limit`, `total` e `totalPages`:
       "destinationUrl": "https://example.com/menu",
       "folder": "Clientes",
       "color": "#000000",
+      "isInUse": false,
       "publicUrl": "http://localhost:3000/redirects/abc12345",
       "createdAt": "2026-09-10T14:00:00.000Z"
     }

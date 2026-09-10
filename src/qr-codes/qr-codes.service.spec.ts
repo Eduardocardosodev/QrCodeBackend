@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,8 +36,10 @@ describe('QrCodesService', () => {
     name: 'Cardápio',
     slug: 'abc12345',
     destinationUrl: 'https://example.com',
+    address: null,
     color: '#000000',
     isActive: true,
+    isInUse: false,
     userId,
     folderId: 'folder-1',
     createdAt: new Date('2026-03-09T12:00:00.000Z'),
@@ -80,11 +86,33 @@ describe('QrCodesService', () => {
       id: qrCode.id,
       name: qrCode.name,
       destinationUrl: qrCode.destinationUrl,
+      address: null,
       folder: 'Clientes',
       color: '#000000',
+      isInUse: false,
       publicUrl: 'http://localhost:3000/redirects/abc12345',
       createdAt: qrCode.createdAt.toISOString(),
     });
+  });
+
+  it('deve filtrar QR Codes por isInUse', async () => {
+    prisma.qrCode.count.mockResolvedValue(1);
+    prisma.qrCode.findMany.mockResolvedValue([{ ...qrCode, isInUse: true }]);
+
+    const result = await service.findAllByUser(userId, {
+      page: 1,
+      limit: 20,
+      isInUse: true,
+    });
+
+    expect(prisma.qrCode.findMany).toHaveBeenCalledWith({
+      where: { userId, isActive: true, isInUse: true },
+      include: { folder: true },
+      orderBy: { createdAt: 'desc' },
+      skip: 0,
+      take: 20,
+    });
+    expect(result.items[0].isInUse).toBe(true);
   });
 
   it('deve paginar QR Codes e calcular total de páginas', async () => {
@@ -128,6 +156,28 @@ describe('QrCodesService', () => {
     expect(result.folder).toBe('Clientes');
   });
 
+  it('deve criar QR Code com endereço', async () => {
+    prisma.folder.upsert.mockResolvedValue(qrCode.folder);
+    prisma.qrCode.findUnique.mockResolvedValue(null);
+    prisma.qrCode.create.mockResolvedValue({
+      ...qrCode,
+      address: 'Rua Principal, 100',
+    });
+
+    await service.create(userId, {
+      name: 'Cardápio',
+      destinationUrl: 'https://example.com',
+      address: ' Rua Principal, 100 ',
+      folder: 'Clientes',
+    });
+
+    const createCalls = prisma.qrCode.create.mock.calls as Array<
+      [{ data: { address: string } }]
+    >;
+
+    expect(createCalls[0]?.[0].data.address).toBe('Rua Principal, 100');
+  });
+
   it('deve atualizar destinationUrl do QR Code do usuário', async () => {
     prisma.qrCode.findUnique.mockResolvedValue(qrCode);
     prisma.qrCode.update.mockResolvedValue({
@@ -135,11 +185,64 @@ describe('QrCodesService', () => {
       destinationUrl: 'https://novo-destino.com',
     });
 
-    const result = await service.updateDestination(userId, qrCode.id, {
+    const result = await service.update(userId, qrCode.id, {
       destinationUrl: 'https://novo-destino.com',
     });
 
     expect(result.destinationUrl).toBe('https://novo-destino.com');
+    expect(result.isInUse).toBe(false);
+  });
+
+  it('deve atualizar isInUse sem alterar isActive', async () => {
+    prisma.qrCode.findUnique.mockResolvedValue(qrCode);
+    prisma.qrCode.update.mockResolvedValue({
+      ...qrCode,
+      isInUse: true,
+    });
+
+    const result = await service.update(userId, qrCode.id, {
+      isInUse: true,
+    });
+
+    expect(prisma.qrCode.update).toHaveBeenCalledWith({
+      where: { id: qrCode.id },
+      data: { isInUse: true },
+      include: { folder: true },
+    });
+    expect(result.isInUse).toBe(true);
+  });
+
+  it('deve atualizar nome e endereço do QR Code', async () => {
+    prisma.qrCode.findUnique.mockResolvedValue(qrCode);
+    prisma.qrCode.update.mockResolvedValue({
+      ...qrCode,
+      name: 'Unidade Centro',
+      address: 'Avenida Central, 200',
+    });
+
+    const result = await service.update(userId, qrCode.id, {
+      name: ' Unidade Centro ',
+      address: ' Avenida Central, 200 ',
+    });
+
+    expect(prisma.qrCode.update).toHaveBeenCalledWith({
+      where: { id: qrCode.id },
+      data: {
+        name: 'Unidade Centro',
+        address: 'Avenida Central, 200',
+      },
+      include: { folder: true },
+    });
+    expect(result.name).toBe('Unidade Centro');
+    expect(result.address).toBe('Avenida Central, 200');
+  });
+
+  it('deve rejeitar atualização sem campos', async () => {
+    prisma.qrCode.findUnique.mockResolvedValue(qrCode);
+
+    await expect(service.update(userId, qrCode.id, {})).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('deve negar atualização de QR Code de outro usuário', async () => {
@@ -149,7 +252,7 @@ describe('QrCodesService', () => {
     });
 
     await expect(
-      service.updateDestination(userId, qrCode.id, {
+      service.update(userId, qrCode.id, {
         destinationUrl: 'https://novo-destino.com',
       }),
     ).rejects.toBeInstanceOf(ForbiddenException);

@@ -16,6 +16,11 @@ export class CreateQrCodeDto {
   @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   destinationUrl: string;
 
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  address?: string;
+
   @IsString()
   @MinLength(1)
   folder: string;

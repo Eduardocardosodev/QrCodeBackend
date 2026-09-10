@@ -26,6 +26,11 @@ export class CreateQrCodeBatchDto {
   @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
   destinationUrl: string;
 
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  address?: string;
+
   @IsUUID()
   folderId: string;
 

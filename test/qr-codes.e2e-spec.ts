@@ -146,6 +146,110 @@ describeE2E('QrCodes (e2e)', () => {
 
     expect(updatedBody.destinationUrl).toBe('https://example.com/new');
     expect(updatedBody.publicUrl).toBe(createdBody.publicUrl);
+    expect(updatedBody.isInUse).toBe(false);
+  });
+
+  it('PATCH /qr-codes/:id atualiza isInUse', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/qr-codes')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        name: 'Plaquinha',
+        destinationUrl: 'https://example.com/padrao',
+        folder: 'Estoque',
+      });
+
+    const createdBody = created.body as QrCodeResponse;
+
+    expect(createdBody.isInUse).toBe(false);
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/qr-codes/${createdBody.id}`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        isInUse: true,
+      })
+      .expect(200);
+
+    const updatedBody = updated.body as QrCodeResponse;
+
+    expect(updatedBody.isInUse).toBe(true);
+    expect(updatedBody.destinationUrl).toBe('https://example.com/padrao');
+  });
+
+  it('PATCH /qr-codes/:id atualiza nome e endereço', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/qr-codes')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        name: 'Plaquinha',
+        destinationUrl: 'https://example.com/padrao',
+        folder: 'Estoque',
+      });
+
+    const createdBody = created.body as QrCodeResponse;
+
+    const updated = await request(app.getHttpServer())
+      .patch(`/qr-codes/${createdBody.id}`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        name: 'Unidade Centro',
+        address: 'Avenida Central, 200',
+      })
+      .expect(200);
+
+    const updatedBody = updated.body as QrCodeResponse;
+
+    expect(updatedBody.name).toBe('Unidade Centro');
+    expect(updatedBody.address).toBe('Avenida Central, 200');
+  });
+
+  it('GET /qr-codes filtra por isInUse', async () => {
+    const available = await request(app.getHttpServer())
+      .post('/qr-codes')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        name: 'Disponível',
+        destinationUrl: 'https://example.com/disponivel',
+        folder: 'Estoque',
+      });
+
+    const sold = await request(app.getHttpServer())
+      .post('/qr-codes')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({
+        name: 'Vendido',
+        destinationUrl: 'https://example.com/vendido',
+        folder: 'Estoque',
+      });
+
+    const availableBody = available.body as QrCodeResponse;
+    const soldBody = sold.body as QrCodeResponse;
+
+    await request(app.getHttpServer())
+      .patch(`/qr-codes/${soldBody.id}`)
+      .set('Authorization', `Bearer ${accessToken}`)
+      .send({ isInUse: true })
+      .expect(200);
+
+    const availableList = await request(app.getHttpServer())
+      .get('/qr-codes?isInUse=false')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+
+    const soldList = await request(app.getHttpServer())
+      .get('/qr-codes?isInUse=true')
+      .set('Authorization', `Bearer ${accessToken}`)
+      .expect(200);
+
+    const availableItems = (availableList.body as { items: QrCodeResponse[] })
+      .items;
+    const soldItems = (soldList.body as { items: QrCodeResponse[] }).items;
+
+    expect(availableItems).toHaveLength(1);
+    expect(availableItems[0].id).toBe(availableBody.id);
+    expect(soldItems).toHaveLength(1);
+    expect(soldItems[0].id).toBe(soldBody.id);
   });
 
   it('DELETE /qr-codes/:id faz soft delete e bloqueia redirect', async () => {

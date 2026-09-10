@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -35,7 +36,12 @@ export class QrCodesService {
     userId: string,
     query: PaginatedQrCodesQueryDto,
   ): Promise<PaginatedQrCodesResponse> {
-    const where = { userId, isActive: true };
+    const where: Prisma.QrCodeWhereInput = { userId, isActive: true };
+
+    if (query.isInUse !== undefined) {
+      where.isInUse = query.isInUse;
+    }
+
     const skip = (query.page - 1) * query.limit;
 
     const [total, qrCodes] = await this.prisma.$transaction([
@@ -82,6 +88,7 @@ export class QrCodesService {
           name: dto.name.trim(),
           slug,
           destinationUrl: dto.destinationUrl.trim(),
+          address: dto.address?.trim() ?? null,
           color: dto.color ?? DEFAULT_QR_COLOR,
           userId,
           folderId: folder.id,
@@ -110,6 +117,7 @@ export class QrCodesService {
 
     const prefix = dto.prefix.trim();
     const destinationUrl = dto.destinationUrl.trim();
+    const address = dto.address?.trim() ?? null;
     const color = dto.color ?? DEFAULT_QR_COLOR;
 
     const items = await this.prisma.$transaction(async (tx) => {
@@ -122,6 +130,7 @@ export class QrCodesService {
             name: `${prefix} ${index + 1}`,
             slug: slugs[index],
             destinationUrl,
+            address,
             color,
             userId,
             folderId: folder.id,
@@ -154,20 +163,47 @@ export class QrCodesService {
     });
   }
 
-  async updateDestination(
+  async update(
     userId: string,
     id: string,
     dto: UpdateQrCodeDto,
   ): Promise<QrCodeResponse> {
+    if (
+      dto.name === undefined &&
+      dto.destinationUrl === undefined &&
+      dto.address === undefined &&
+      dto.isInUse === undefined
+    ) {
+      throw new BadRequestException(
+        'Informe name, destinationUrl, address ou isInUse para atualizar o QR Code',
+      );
+    }
+
     const qrCode = await this.findOwnedQrCode(userId, id, {
       requireActive: true,
     });
 
+    const data: Prisma.QrCodeUpdateInput = {};
+
+    if (dto.name !== undefined) {
+      data.name = dto.name.trim();
+    }
+
+    if (dto.destinationUrl !== undefined) {
+      data.destinationUrl = dto.destinationUrl.trim();
+    }
+
+    if (dto.address !== undefined) {
+      data.address = dto.address.trim();
+    }
+
+    if (dto.isInUse !== undefined) {
+      data.isInUse = dto.isInUse;
+    }
+
     const updated = await this.prisma.qrCode.update({
       where: { id: qrCode.id },
-      data: {
-        destinationUrl: dto.destinationUrl.trim(),
-      },
+      data,
       include: { folder: true },
     });
 
@@ -281,8 +317,10 @@ export class QrCodesService {
       id: qrCode.id,
       name: qrCode.name,
       destinationUrl: qrCode.destinationUrl,
+      address: qrCode.address,
       folder: qrCode.folder?.name ?? '',
       color: qrCode.color,
+      isInUse: qrCode.isInUse,
       publicUrl: buildPublicUrl(publicBaseUrl, qrCode.slug),
       createdAt: qrCode.createdAt.toISOString(),
     };

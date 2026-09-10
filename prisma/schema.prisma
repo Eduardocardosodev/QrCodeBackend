@@ -55,8 +55,10 @@ model QrCode {
   name           String
   slug           String      @unique
   destinationUrl String
+  address        String?
   color          String      @default("#000000")
   isActive       Boolean     @default(true)
+  isInUse        Boolean     @default(false)
   userId         String
   folderId       String?
   createdAt      DateTime    @default(now())
@@ -68,6 +70,7 @@ model QrCode {
   @@index([userId])
   @@index([folderId])
   @@index([slug])
+  @@index([isInUse])
 }
 
 model ScanEvent {
