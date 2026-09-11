@@ -122,26 +122,36 @@ export class QrCodesService {
 
     const items = await this.prisma.$transaction(async (tx) => {
       const slugs = await this.generateUniqueSlugs(dto.quantity, tx);
-      const created: QrCodeWithFolder[] = [];
 
-      for (let index = 0; index < dto.quantity; index += 1) {
-        const qrCode = await tx.qrCode.create({
-          data: {
-            name: `${prefix} ${index + 1}`,
-            slug: slugs[index],
-            destinationUrl,
-            address,
-            color,
-            userId,
-            folderId: folder.id,
-          },
-          include: { folder: true },
-        });
+      await tx.qrCode.createMany({
+        data: slugs.map((slug, index) => ({
+          name: `${prefix} ${index + 1}`,
+          slug,
+          destinationUrl,
+          address,
+          color,
+          userId,
+          folderId: folder.id,
+        })),
+      });
 
-        created.push(qrCode);
-      }
+      const created = await tx.qrCode.findMany({
+        where: { slug: { in: slugs } },
+        include: { folder: true },
+      });
+      const createdBySlug = new Map(
+        created.map((qrCode) => [qrCode.slug, qrCode]),
+      );
 
-      return created;
+      return slugs.map((slug) => {
+        const qrCode = createdBySlug.get(slug);
+
+        if (!qrCode) {
+          throw new Error(`QR Code criado não encontrado: ${slug}`);
+        }
+
+        return qrCode;
+      });
     });
 
     return {
@@ -269,40 +279,29 @@ export class QrCodesService {
     quantity: number,
     tx: Prisma.TransactionClient,
   ): Promise<string[]> {
-    const slugs: string[] = [];
-    const used = new Set<string>();
+    for (let attempt = 0; attempt < MAX_BATCH_SLUG_ATTEMPTS; attempt += 1) {
+      const candidates = new Set<string>();
 
-    while (slugs.length < quantity) {
-      let attempts = 0;
-
-      while (attempts < MAX_BATCH_SLUG_ATTEMPTS) {
-        const slug = generateSlug();
-
-        if (used.has(slug)) {
-          attempts += 1;
-          continue;
-        }
-
-        const existing = await tx.qrCode.findUnique({
-          where: { slug },
-          select: { id: true },
-        });
-
-        if (!existing) {
-          used.add(slug);
-          slugs.push(slug);
-          break;
-        }
-
-        attempts += 1;
+      while (candidates.size < quantity) {
+        candidates.add(generateSlug());
       }
 
-      if (attempts >= MAX_BATCH_SLUG_ATTEMPTS) {
-        throw new Error('Não foi possível gerar slugs únicos para o lote');
+      const candidateSlugs = [...candidates];
+      const existing = await tx.qrCode.findMany({
+        where: { slug: { in: candidateSlugs } },
+        select: { slug: true },
+      });
+      const existingSlugs = new Set(existing.map((qrCode) => qrCode.slug));
+      const availableSlugs = candidateSlugs.filter(
+        (slug) => !existingSlugs.has(slug),
+      );
+
+      if (availableSlugs.length === quantity) {
+        return availableSlugs;
       }
     }
 
-    return slugs;
+    throw new Error('Não foi possível gerar slugs únicos para o lote');
   }
 
   private normalizeFolderName(folder: string): string {

@@ -17,6 +17,7 @@ describe('QrCodesService', () => {
       count: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
+      createMany: jest.fn(),
       update: jest.fn(),
     },
     folder: {
@@ -276,16 +277,27 @@ describe('QrCodesService', () => {
 
   it('deve criar lote com nomes sequenciais e mesma URL, pasta e cor', async () => {
     prisma.folder.findFirst.mockResolvedValue(qrCode.folder);
-    prisma.qrCode.findUnique.mockResolvedValue(null);
-    prisma.qrCode.create.mockImplementation(
-      ({ data }: { data: { name: string; slug: string } }) => ({
-        ...qrCode,
-        id: `qr-${data.name}`,
-        name: data.name,
-        slug: data.slug,
-        destinationUrl: 'https://example.com/padrao',
-      }),
+    prisma.qrCode.findMany.mockImplementation(
+      ({
+        include,
+        where,
+      }: {
+        include?: { folder: boolean };
+        where: { slug: { in: string[] } };
+      }) =>
+        include
+          ? Promise.resolve(
+              where.slug.in.map((slug, index) => ({
+                ...qrCode,
+                id: `qr-${index + 1}`,
+                name: `Cliente ${index + 1}`,
+                slug,
+                destinationUrl: 'https://example.com/padrao',
+              })),
+            )
+          : Promise.resolve([]),
     );
+    prisma.qrCode.createMany.mockResolvedValue({ count: 3 });
 
     const result = await service.createBatch(userId, {
       prefix: 'Cliente',
@@ -322,13 +334,8 @@ describe('QrCodesService', () => {
 
   it('deve propagar erro e não concluir lote quando criação falhar', async () => {
     prisma.folder.findFirst.mockResolvedValue(qrCode.folder);
-    prisma.qrCode.findUnique.mockResolvedValue(null);
-    prisma.qrCode.create
-      .mockResolvedValueOnce({
-        ...qrCode,
-        name: 'Cliente 1',
-      })
-      .mockRejectedValueOnce(new Error('falha no banco'));
+    prisma.qrCode.findMany.mockResolvedValue([]);
+    prisma.qrCode.createMany.mockRejectedValue(new Error('falha no banco'));
 
     await expect(
       service.createBatch(userId, {
